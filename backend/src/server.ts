@@ -17,7 +17,7 @@ app.use(express.json());
 app.use('/api/auth', authRoutes);
 app.use('/api/leads', leadRoutes);
 
-app.use(errorHandler);
+app.use(errorHandler as any);
 
 mongoose
   .connect(process.env.MONGO_URI as string)

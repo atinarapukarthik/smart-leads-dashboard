@@ -2,22 +2,22 @@ import { createBrowserRouter } from 'react-router-dom';
 import ProtectedRoute from './ProtectedRoute';
 import RoleRoute from './RoleRoute';
 import Dashboard from '../pages/Dashboard';
+import LandingPage from '../pages/LandingPage';
+import LoginPage from '../pages/LoginPage';
+import RegisterPage from '../pages/RegisterPage';
 
 const router = createBrowserRouter([
   {
-    path: '/login',
-    lazy: async () => {
-      const { default: LoginPage } = await import('../pages/LoginPage');
-      return { Component: LoginPage };
-    },
+    path: '/',
+    element: <LandingPage />,
   },
   {
-    path: '/',
-    element: (
-      <ProtectedRoute>
-        <Dashboard />
-      </ProtectedRoute>
-    ),
+    path: '/login',
+    element: <LoginPage />,
+  },
+  {
+    path: '/register',
+    element: <RegisterPage />,
   },
   {
     path: '/dashboard',
@@ -28,7 +28,7 @@ const router = createBrowserRouter([
     ),
   },
   {
-    path: '/admin/*',
+    path: '/admin',
     element: (
       <ProtectedRoute>
         <RoleRoute requiredRole="Admin">

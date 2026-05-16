@@ -11,12 +11,12 @@ import {
 
 const router = Router();
 
-router.use(authenticateToken);
+router.use(authenticateToken as any);
 
-router.post('/', createLead);
-router.get('/', getAllLeads);
-router.get('/:id', getLeadById);
-router.put('/:id', updateLead);
-router.delete('/:id', authorizeRoles('Admin'), deleteLead);
+router.post('/', createLead as any);
+router.get('/', getAllLeads as any);
+router.get('/:id', getLeadById as any);
+router.put('/:id', updateLead as any);
+router.delete('/:id', authorizeRoles('Admin') as any, deleteLead as any);
 
 export default router;

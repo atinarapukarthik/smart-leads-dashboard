@@ -1,7 +1,7 @@
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation, Link } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import apiClient from '../api/client';
 import type { AuthResponse } from '../types';
@@ -16,6 +16,9 @@ type LoginFormData = z.infer<typeof loginSchema>;
 const LoginPage = () => {
   const { login } = useAuth();
   const navigate = useNavigate();
+  const location = useLocation();
+  const registrationSuccess = location.state?.registrationSuccess === true;
+
   const {
     register,
     handleSubmit,
@@ -38,9 +41,24 @@ const LoginPage = () => {
   return (
     <div className="flex min-h-screen items-center justify-center bg-gray-50">
       <div className="w-full max-w-md rounded-lg bg-white p-8 shadow-md">
-        <h1 className="mb-6 text-center text-2xl font-bold text-gray-900">
-          Sign In
-        </h1>
+        <div className="mb-4 flex items-center justify-between">
+          <button
+            type="button"
+            onClick={() => navigate('/')}
+            className="text-sm text-gray-500 hover:text-gray-700 transition-colors"
+          >
+            &larr; Back
+          </button>
+          <h1 className="text-xl font-bold text-gray-900">Sign In</h1>
+          <div className="w-12" />
+        </div>
+
+        {registrationSuccess && (
+          <div className="mb-4 rounded-md bg-green-50 p-3 text-sm text-green-700">
+            Account created successfully. Please authenticate to access your dashboard.
+          </div>
+        )}
+
         <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
           <div>
             <label
@@ -88,6 +106,13 @@ const LoginPage = () => {
             {isSubmitting ? 'Signing in...' : 'Sign In'}
           </button>
         </form>
+
+        <p className="mt-4 text-center text-sm text-gray-600">
+          New to the platform?{' '}
+          <Link to="/register" className="font-medium text-blue-600 hover:text-blue-700">
+            Create an account
+          </Link>
+        </p>
       </div>
     </div>
   );

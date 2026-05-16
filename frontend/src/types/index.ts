@@ -15,6 +15,16 @@ export type Lead = {
   updatedAt: string;
 };
 
+export type RegisterResponse = {
+  success: boolean;
+  data: {
+    id: string;
+    name: string;
+    email: string;
+    role: string;
+  };
+};
+
 export type AuthResponse = {
   success: boolean;
   data: {
