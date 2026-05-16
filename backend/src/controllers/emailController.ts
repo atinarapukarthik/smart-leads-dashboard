@@ -282,21 +282,25 @@ export const initiateGoogleOAuth = async (req: Request, res: Response): Promise<
 };
 
 export const handleGoogleCallback = async (req: Request, res: Response): Promise<void> => {
-  try {
-    const { code, state } = req.query;
+  const { code, state } = req.query;
 
-    let token = '';
-    if (state) {
-      try {
-        const stateObj = JSON.parse(Buffer.from(state as string, 'base64').toString());
-        token = stateObj.token;
-      } catch {
-        console.log('[OAUTH] Could not parse state');
-      }
+  let token = '';
+  if (state) {
+    try {
+      const stateObj = JSON.parse(Buffer.from(state as string, 'base64').toString());
+      token = stateObj.token;
+    } catch {
+      console.log('[OAUTH] Could not parse state');
     }
+  }
+
+  try {
 
     if (!code) {
-      res.redirect('http://localhost:5173/dashboard?tab=email&error=no_code');
+      const redirectUrl = token 
+        ? `http://localhost:5173/dashboard?tab=email&error=no_code&token=${token}`
+        : 'http://localhost:5173/dashboard?tab=email&error=no_code';
+      res.redirect(redirectUrl);
       return;
     }
 
@@ -305,7 +309,10 @@ export const handleGoogleCallback = async (req: Request, res: Response): Promise
     const redirectUri = process.env.GOOGLE_REDIRECT_URI;
 
     if (!clientId || !clientSecret) {
-      res.redirect('http://localhost:5173/dashboard?tab=email&error=missing_credentials');
+      const redirectUrl = token 
+        ? `http://localhost:5173/dashboard?tab=email&error=missing_credentials&token=${token}`
+        : 'http://localhost:5173/dashboard?tab=email&error=missing_credentials';
+      res.redirect(redirectUrl);
       return;
     }
 
@@ -325,7 +332,10 @@ export const handleGoogleCallback = async (req: Request, res: Response): Promise
 
     if (tokens.error) {
       console.error('[OAUTH] Token error:', tokens.error);
-      res.redirect('http://localhost:5173/dashboard?tab=email&error=token_failed');
+      const redirectUrl = token 
+        ? `http://localhost:5173/dashboard?tab=email&error=token_failed&token=${token}`
+        : 'http://localhost:5173/dashboard?tab=email&error=token_failed';
+      res.redirect(redirectUrl);
       return;
     }
 
@@ -356,17 +366,48 @@ export const handleGoogleCallback = async (req: Request, res: Response): Promise
       console.log('[OAUTH] Integration saved for user:', userId);
     }
 
-    res.redirect('http://localhost:5173/dashboard?tab=email&success=google_connected');
+    if (token) {
+      const jwt = require('jsonwebtoken');
+      const decoded = jwt.verify(token, process.env.JWT_SECRET) as { id: string };
+      const userId = decoded.id;
+
+      await Integration.findOneAndUpdate(
+        { userId },
+        {
+          userId,
+          gmailAddress: userInfo.email,
+          accessToken: tokens.access_token,
+          refreshToken: tokens.refresh_token,
+          expiryDate: Date.now() + (tokens.expires_in || 3600) * 1000,
+        },
+        { upsert: true }
+      );
+      console.log('[OAUTH] Integration saved for user:', userId);
+    }
+
+    // Redirect preserving token in URL for session recovery
+    const redirectUrl = token 
+      ? `http://localhost:5173/dashboard?tab=email&success=google_connected&token=${token}`
+      : 'http://localhost:5173/dashboard?tab=email&success=google_connected';
+    
+    res.redirect(redirectUrl);
   } catch (error) {
     const err = error as Error;
     console.error('[OAUTH] Callback error:', err.message);
-    res.redirect('http://localhost:5173/dashboard?tab=email&error=callback_failed');
+    const redirectUrl = token 
+      ? `http://localhost:5173/dashboard?tab=email&error=callback_failed&token=${token}`
+      : 'http://localhost:5173/dashboard?tab=email&error=callback_failed';
+    res.redirect(redirectUrl);
   }
 };
 
 export const getIntegrationStatus = async (req: Request, res: Response): Promise<void> => {
   try {
-    const integration = await Integration.findOne({ userId: req.user?.id });
+    const userId = req.user?.id;
+    console.log('[INTEGRATION] Status check for userId:', userId);
+    
+    const integration = await Integration.findOne({ userId });
+    console.log('[INTEGRATION] Found integration:', integration ? 'yes' : 'no');
 
     if (!integration) {
       res.json({ success: true, connected: false });
@@ -374,6 +415,7 @@ export const getIntegrationStatus = async (req: Request, res: Response): Promise
     }
 
     const isExpired = Date.now() > integration.expiryDate;
+    console.log('[INTEGRATION] Token expired:', isExpired);
 
     res.json({
       success: true,

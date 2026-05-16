@@ -46,7 +46,7 @@ const SettingsTab = () => {
 };
 
 const Dashboard = () => {
-  const { user } = useAuth();
+  const { user, login } = useAuth();
   const isAdmin = user?.role === 'Admin';
 
   const [activeTab, setActiveTab] = useState('leads');
@@ -66,18 +66,33 @@ const Dashboard = () => {
   const [showGoogleConnect, setShowGoogleConnect] = useState(false);
 
   const fetchGoogleStatus = useCallback(async () => {
-    if (!isAdmin) return;
+    console.log('[Dashboard] Fetching Google status...');
     try {
       const res = await getIntegrationStatus();
-      setGoogleConnected(res.data.connected);
-    } catch {
+      console.log('[Dashboard] Google status response:', res);
+      setGoogleConnected(res.connected ?? false);
+    } catch (err) {
+      console.error('[Dashboard] Google status error:', err);
       setGoogleConnected(false);
     }
-  }, [isAdmin]);
+  }, []);
 
   useEffect(() => {
-    if (isAdmin) fetchGoogleStatus();
-  }, [isAdmin, fetchGoogleStatus]);
+    fetchGoogleStatus();
+  }, [fetchGoogleStatus]);
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('success') === 'google_connected') {
+      console.log('[Dashboard] Google OAuth success detected, refetching status...');
+      fetchGoogleStatus();
+      // Clean URL
+      const cleanUrl = params.get('token') 
+        ? '/dashboard?tab=email' 
+        : '/dashboard?tab=email';
+      window.history.replaceState({}, '', cleanUrl);
+    }
+  }, [fetchGoogleStatus]);
 
   const debouncedSearch = useDebounce(search, 500);
 

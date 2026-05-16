@@ -36,7 +36,9 @@ const LoginPage = () => {
     try {
       const response = await apiClient.post<AuthResponse>('/auth/login', data);
       const { token, user } = response.data.data;
+      console.log('[Login] Got token:', !!token, 'user:', user.email, 'role:', user.role);
       login(token, user);
+      console.log('[Login] After login, localStorage token:', !!localStorage.getItem('token'));
       navigate('/dashboard');
     } catch (err: unknown) {
       const error = err as { response?: { data?: { message?: string } } };
