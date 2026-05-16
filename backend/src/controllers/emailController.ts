@@ -5,7 +5,9 @@ import Message from '../models/Message';
 import Metric from '../models/Metric';
 import Integration from '../models/Integration';
 
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY || '');
+const apiKey = process.env.GEMINI_API_KEY || '';
+console.log('[EMAIL] API Key present:', !!apiKey, 'starts with:', apiKey.substring(0, 10));
+const genAI = new GoogleGenerativeAI(apiKey);
 
 export const generateDraft = async (req: Request, res: Response, _next?: NextFunction): Promise<void> => {
   try {
@@ -23,7 +25,7 @@ export const generateDraft = async (req: Request, res: Response, _next?: NextFun
       return;
     }
 
-    const model = genAI.getGenerativeModel({ model: 'gemma-2-2b' });
+    const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
 
     const prompt = `You are a sales assistant helping a sales representative write a professional introductory email to a potential lead.
 
@@ -158,7 +160,7 @@ export const processInboundEmail = async (req: Request, res: Response): Promise<
       return;
     }
 
-    const model = genAI.getGenerativeModel({ model: 'gemma-2-2b' });
+    const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
 
     const classificationPrompt = `Analyze this email response text from a prospective buyer. Classify the user's explicit intent into exactly one word from these options: 'Qualified' (if requesting demo, setup, or showing clear business interest), 'Lost' (if requesting unsubscribe, stating no budget, or explicitly rejecting communication), or 'Contacted' (if a generic response or out-of-office notification). Return ONLY the single keyword string.
 

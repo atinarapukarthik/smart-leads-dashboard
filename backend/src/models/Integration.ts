@@ -38,6 +38,6 @@ const IntegrationSchema = new Schema<IIntegration>(
   { timestamps: true }
 );
 
-IntegrationSchema.index({ userId: 1 });
+// Index already created by unique: true above
 
 export default mongoose.model<IIntegration>('Integration', IntegrationSchema);
