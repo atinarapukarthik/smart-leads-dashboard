@@ -4,34 +4,58 @@ import {
   useState,
   useEffect,
   useCallback,
-  ReactNode,
+  useMemo,
+  type ReactNode,
 } from 'react';
 import type { User } from '../types';
 
 interface AuthContextType {
   user: User | null;
   isAuthenticated: boolean;
+  isLoading: boolean;
   login: (token: string, user: User) => void;
   logout: () => void;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
-const hydrateFromStorage = (): { token: string | null; user: User | null } => {
-  const token = localStorage.getItem('token');
-  const userRaw = localStorage.getItem('user');
-  const user: User | null = userRaw ? JSON.parse(userRaw) : null;
-  return { token, user };
+const getStoredAuth = (): { token: string | null; user: User | null } => {
+  try {
+    const token = localStorage.getItem('token');
+    const userRaw = localStorage.getItem('user');
+    
+    if (!token || !userRaw) {
+      return { token: null, user: null };
+    }
+    
+    const user = JSON.parse(userRaw) as User;
+    
+    if (!user || !user._id || !user.email) {
+      return { token: null, user: null };
+    }
+    
+    return { token, user };
+  } catch (error) {
+    console.error('[Auth] Failed to parse stored auth:', error);
+    localStorage.removeItem('token');
+    localStorage.removeItem('user');
+    return { token: null, user: null };
+  }
 };
 
 export const AuthProvider = ({ children }: { children: ReactNode }) => {
-  const [user, setUser] = useState<User | null>(null);
+  const [user, setUser] = useState<User | null>(() => {
+    const { user: storedUser } = getStoredAuth();
+    return storedUser;
+  });
+  const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
-    const { token, user: storedUser } = hydrateFromStorage();
+    const { token, user: storedUser } = getStoredAuth();
     if (token && storedUser) {
       setUser(storedUser);
     }
+    setIsLoading(false);
   }, []);
 
   const login = useCallback((token: string, user: User) => {
@@ -46,10 +70,16 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     setUser(null);
   }, []);
 
-  const isAuthenticated = user !== null;
+  const value = useMemo(() => ({
+    user,
+    isAuthenticated: !!user,
+    isLoading,
+    login,
+    logout,
+  }), [user, isLoading, login, logout]);
 
   return (
-    <AuthContext.Provider value={{ user, isAuthenticated, login, logout }}>
+    <AuthContext.Provider value={value}>
       {children}
     </AuthContext.Provider>
   );

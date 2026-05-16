@@ -1,17 +1,55 @@
 import { useState, useEffect, useCallback } from 'react';
 import { getLeads, createLead, deleteLead } from '../api/leadService';
+import { getIntegrationStatus, initiateGoogleOAuth } from '../api/emailService';
 import { useAuth } from '../context/AuthContext';
 import useDebounce from '../hooks/useDebounce';
 import Loader from '../components/ui/Loader';
 import EmptyState from '../components/ui/EmptyState';
 import ErrorFallback from '../components/ui/ErrorFallback';
 import LeadTable from '../components/leads/LeadTable';
+import KpiCards from '../components/leads/KpiCards';
+import CreateLeadModal from '../components/leads/CreateLeadModal';
+import EmailWorkspace from '../components/leads/EmailWorkspace';
+import DashboardNav from '../components/layout/DashboardNav';
+import AnalyticsPage from './AnalyticsPage';
 import type { Lead, PaginatedResponse } from '../types';
+
+const SettingsTab = () => {
+  const { user } = useAuth();
+  return (
+    <div className="mx-auto max-w-2xl py-8">
+      <h2 className="mb-6 text-xl font-bold text-gray-900">Account Settings</h2>
+      <div className="card divide-y divide-gray-100">
+        <div className="flex items-center justify-between px-6 py-4">
+          <div>
+            <p className="text-sm font-medium text-gray-900">Name</p>
+            <p className="text-sm text-gray-500">{user?.name}</p>
+          </div>
+        </div>
+        <div className="flex items-center justify-between px-6 py-4">
+          <div>
+            <p className="text-sm font-medium text-gray-900">Email</p>
+            <p className="text-sm text-gray-500">{user?.email}</p>
+          </div>
+        </div>
+        <div className="flex items-center justify-between px-6 py-4">
+          <div>
+            <p className="text-sm font-medium text-gray-900">Role</p>
+            <span className="mt-0.5 inline-block rounded-full bg-primary-50 px-2.5 py-0.5 text-xs font-medium text-primary-700">
+              {user?.role}
+            </span>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
 
 const Dashboard = () => {
   const { user } = useAuth();
   const isAdmin = user?.role === 'Admin';
 
+  const [activeTab, setActiveTab] = useState('leads');
   const [leads, setLeads] = useState<Lead[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -20,9 +58,26 @@ const Dashboard = () => {
   const [status, setStatus] = useState('');
   const [source, setSource] = useState('');
   const [sort, setSort] = useState('Latest');
-  const [pagination, setPagination] =
-    useState<PaginatedResponse<Lead>['pagination'] | null>(null);
+  const [pagination, setPagination] = useState<PaginatedResponse<Lead>['pagination'] | null>(null);
   const [showModal, setShowModal] = useState(false);
+  const [showEmail, setShowEmail] = useState(false);
+  const [selectedLeadForEmail, setSelectedLeadForEmail] = useState<Lead | null>(null);
+  const [googleConnected, setGoogleConnected] = useState(false);
+  const [showGoogleConnect, setShowGoogleConnect] = useState(false);
+
+  const fetchGoogleStatus = useCallback(async () => {
+    if (!isAdmin) return;
+    try {
+      const res = await getIntegrationStatus();
+      setGoogleConnected(res.data.connected);
+    } catch {
+      setGoogleConnected(false);
+    }
+  }, [isAdmin]);
+
+  useEffect(() => {
+    if (isAdmin) fetchGoogleStatus();
+  }, [isAdmin, fetchGoogleStatus]);
 
   const debouncedSearch = useDebounce(search, 500);
 
@@ -109,49 +164,162 @@ const Dashboard = () => {
     return <ErrorFallback error={error} onRetry={fetchLeads} />;
   }
 
+  if (activeTab === 'email' && !googleConnected) {
+    return (
+      <>
+        <DashboardNav activeTab={activeTab} onTabChange={setActiveTab} />
+        <main className="mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:px-8">
+          <div className="mx-auto max-w-md text-center py-12">
+            <div className="mb-6 flex h-20 w-20 mx-auto items-center justify-center rounded-full bg-primary-100">
+              <svg className="h-10 w-10 text-primary-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M21.75 6.75v10.5a2.25 2.25 0 01-2.25 2.25h-15a2.25 2.25 0 01-2.25-2.25V6.75m19.5 0A2.25 2.25 0 0019.5 4.5h-15a2.25 2.25 0 00-2.25 2.25m19.5 0v.243a2.25 2.25 0 01-1.07 1.916l-7.5 4.615a2.25 2.25 0 01-2.36 0L3.32 8.91a2.25 2.25 0 01-1.07-1.916V6.75" />
+              </svg>
+            </div>
+            <h2 className="text-xl font-bold text-gray-900">Connect Google Account</h2>
+            <p className="mt-2 text-gray-500">Connect your Google account to send emails and use AI-powered features.</p>
+            <button
+              type="button"
+              onClick={async () => {
+                try {
+                  const res = await initiateGoogleOAuth();
+                  console.log('Google OAuth response:', res);
+                  if (res.success && res.mode === 'live' && res.authUrl) {
+                    window.location.href = res.authUrl;
+                  } else if (res.mode === 'offline') {
+                    alert('Google OAuth credentials not configured in backend. Running in offline mode.');
+                  } else {
+                    alert(res.message || 'Failed to initiate Google OAuth');
+                  }
+                } catch (err) {
+                  console.error('Google OAuth error:', err);
+                  const error = err as { response?: { data?: { message?: string } } };
+                  alert(error.response?.data?.message || 'Failed to initiate Google OAuth. Please check console.');
+                }
+              }}
+              className="mt-6 btn-primary"
+            >
+              Connect Google Account
+            </button>
+          </div>
+        </main>
+      </>
+    );
+  }
+
+  if (activeTab === 'email') {
+    return (
+      <>
+        <DashboardNav activeTab={activeTab} onTabChange={setActiveTab} />
+        <main className="mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:px-8">
+          {selectedLeadForEmail ? (
+            <EmailWorkspace
+              leadId={selectedLeadForEmail._id}
+              leadName={selectedLeadForEmail.name}
+              leadEmail={selectedLeadForEmail.email}
+              onClose={() => {
+                setShowEmail(false);
+                setSelectedLeadForEmail(null);
+              }}
+            />
+          ) : (
+            <div className="text-center py-12">
+              <p className="text-gray-500">Select a lead from the Leads tab to send an email.</p>
+            </div>
+          )}
+        </main>
+      </>
+    );
+  }
+
+  if (activeTab === 'analytics') {
+    return (
+      <>
+        <DashboardNav activeTab={activeTab} onTabChange={setActiveTab} />
+        <main className="mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:px-8">
+          <AnalyticsPage />
+        </main>
+      </>
+    );
+  }
+
+  if (activeTab === 'settings') {
+    return (
+      <>
+        <DashboardNav activeTab={activeTab} onTabChange={setActiveTab} />
+        <main className="mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:px-8">
+          <SettingsTab />
+        </main>
+      </>
+    );
+  }
+
   return (
-    <div className="p-6">
+    <>
+      <DashboardNav activeTab={activeTab} onTabChange={setActiveTab} />
+      <main className="mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:px-8">
       <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-        <h1 className="text-2xl font-bold text-gray-900">Leads Dashboard</h1>
-        <div className="flex gap-2">
+        <div>
+          <h1 className="text-2xl font-bold text-gray-900">Leads Dashboard</h1>
+          <p className="mt-0.5 text-sm text-gray-500">
+            {pagination ? `Showing ${leads.length} of ${pagination.totalRecords} leads` : 'Track and manage your leads'}
+          </p>
+        </div>
+        <div className="flex gap-3">
           <button
             type="button"
             onClick={exportCSV}
             disabled={!hasData}
-            className="rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50 transition-colors"
+            className="btn-secondary"
           >
+            <svg className="mr-2 h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3" />
+            </svg>
             Export CSV
           </button>
           {isAdmin && (
             <button
               type="button"
               onClick={() => setShowModal(true)}
-              className="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 transition-colors"
+              className="btn-primary"
             >
+              <svg className="mr-2 h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M12 6v12m6-6H6" />
+              </svg>
               Add Lead
             </button>
           )}
         </div>
       </div>
 
-      <div className="mb-4 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
-        <input
-          type="text"
-          value={search}
-          onChange={(e) => {
-            setSearch(e.target.value);
-            setPage(1);
-          }}
-          placeholder="Search by name or email..."
-          className="rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
-        />
+      {hasData && (
+        <div className="mb-6">
+          <KpiCards leads={leads} />
+        </div>
+      )}
+
+      <div className="mb-5 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        <div className="relative">
+          <svg
+            className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400"
+            fill="none"
+            viewBox="0 0 24 24"
+            stroke="currentColor"
+            strokeWidth={2}
+          >
+            <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-5.197-5.197m0 0A7.5 7.5 0 105.196 5.196a7.5 7.5 0 0010.607 10.607z" />
+          </svg>
+          <input
+            type="text"
+            value={search}
+            onChange={(e) => { setSearch(e.target.value); setPage(1); }}
+            placeholder="Search by name or email..."
+            className="input-field pl-9"
+          />
+        </div>
         <select
           value={status}
-          onChange={(e) => {
-            setStatus(e.target.value);
-            setPage(1);
-          }}
-          className="rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+          onChange={(e) => { setStatus(e.target.value); setPage(1); }}
+          className="select-field"
         >
           <option value="">All Statuses</option>
           <option value="New">New</option>
@@ -161,11 +329,8 @@ const Dashboard = () => {
         </select>
         <select
           value={source}
-          onChange={(e) => {
-            setSource(e.target.value);
-            setPage(1);
-          }}
-          className="rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+          onChange={(e) => { setSource(e.target.value); setPage(1); }}
+          className="select-field"
         >
           <option value="">All Sources</option>
           <option value="Website">Website</option>
@@ -174,8 +339,8 @@ const Dashboard = () => {
         </select>
         <select
           value={sort}
-          onChange={(e) => setSort(e.target.value)}
-          className="rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+          onChange={(e) => { setSort(e.target.value); setPage(1); }}
+          className="select-field"
         >
           <option value="Latest">Latest First</option>
           <option value="Oldest">Oldest First</option>
@@ -191,30 +356,36 @@ const Dashboard = () => {
       {!loading && !hasData && !error && (
         <EmptyState
           title="No Leads Found"
-          message="Adjust your filters or add a new lead."
+          message={search || status || source ? 'Adjust your filters to see more results.' : 'Start by adding your first lead.'}
+          action={isAdmin ? { label: 'Add Your First Lead', onClick: () => setShowModal(true) } : undefined}
         />
       )}
 
       {hasData && (
         <>
-          <LeadTable leads={leads} onDelete={handleDelete} />
+          <div className="card">
+            <LeadTable
+              leads={leads}
+              onDelete={handleDelete}
+              onEmailClick={(lead) => {
+                setSelectedLeadForEmail(lead);
+                setShowEmail(true);
+                setActiveTab('email');
+              }}
+            />
+          </div>
 
           {pagination && pagination.totalPages > 1 && (
-            <div className="mt-4 flex items-center justify-between">
-              <p className="text-sm text-gray-600">
+            <div className="mt-5 flex flex-col items-center justify-between gap-4 sm:flex-row">
+              <p className="text-sm text-gray-500">
                 Showing{' '}
-                <span className="font-medium">
-                  {(pagination.currentPage - 1) * pagination.limit + 1}
-                </span>
+                <span className="font-medium text-gray-700">{(pagination.currentPage - 1) * pagination.limit + 1}</span>
                 {' '}to{' '}
-                <span className="font-medium">
-                  {Math.min(
-                    pagination.currentPage * pagination.limit,
-                    pagination.totalRecords
-                  )}
+                <span className="font-medium text-gray-700">
+                  {Math.min(pagination.currentPage * pagination.limit, pagination.totalRecords)}
                 </span>
                 {' '}of{' '}
-                <span className="font-medium">{pagination.totalRecords}</span>
+                <span className="font-medium text-gray-700">{pagination.totalRecords}</span>
                 {' '}results
               </p>
               <div className="flex gap-2">
@@ -222,19 +393,23 @@ const Dashboard = () => {
                   type="button"
                   onClick={() => setPage((p) => Math.max(1, p - 1))}
                   disabled={pagination.currentPage === 1}
-                  className="rounded-md border border-gray-300 bg-white px-3 py-1 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                  className="btn-secondary px-3 py-1.5"
                 >
+                  <svg className="mr-1 h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5L8.25 12l7.5-7.5" />
+                  </svg>
                   Previous
                 </button>
                 <button
                   type="button"
-                  onClick={() =>
-                    setPage((p) => Math.min(pagination.totalPages, p + 1))
-                  }
+                  onClick={() => setPage((p) => Math.min(pagination.totalPages, p + 1))}
                   disabled={pagination.currentPage === pagination.totalPages}
-                  className="rounded-md border border-gray-300 bg-white px-3 py-1 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                  className="btn-secondary px-3 py-1.5"
                 >
                   Next
+                  <svg className="ml-1 h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M8.25 4.5l7.5 7.5-7.5 7.5" />
+                  </svg>
                 </button>
               </div>
             </div>
@@ -243,146 +418,10 @@ const Dashboard = () => {
       )}
 
       {showModal && (
-        <CreateLeadModal
-          onSubmit={handleCreate}
-          onClose={() => setShowModal(false)}
-        />
+        <CreateLeadModal onSubmit={handleCreate} onClose={() => setShowModal(false)} />
       )}
-    </div>
-  );
-};
-
-interface CreateLeadModalProps {
-  onSubmit: (data: {
-    name: string;
-    email: string;
-    status: 'New' | 'Contacted' | 'Qualified' | 'Lost';
-    source: 'Website' | 'Instagram' | 'Referral';
-  }) => void;
-  onClose: () => void;
-}
-
-const CreateLeadModal = ({ onSubmit, onClose }: CreateLeadModalProps) => {
-  const [name, setName] = useState('');
-  const [email, setEmail] = useState('');
-  const [status, setStatus] = useState<'New' | 'Contacted' | 'Qualified' | 'Lost'>('New');
-  const [source, setSource] = useState<'Website' | 'Instagram' | 'Referral'>('Website');
-  const [formError, setFormError] = useState('');
-
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!name.trim() || !email.trim()) {
-      setFormError('Name and email are required.');
-      return;
-    }
-    onSubmit({ name: name.trim(), email: email.trim(), status, source });
-  };
-
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-40">
-      <div className="w-full max-w-md rounded-lg bg-white p-6 shadow-xl">
-        <h2 className="mb-4 text-lg font-semibold text-gray-900">Add New Lead</h2>
-        <form onSubmit={handleSubmit} className="space-y-4">
-          <div>
-            <label
-              htmlFor="lead-name"
-              className="mb-1 block text-sm font-medium text-gray-700"
-            >
-              Name
-            </label>
-            <input
-              id="lead-name"
-              type="text"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
-              placeholder="John Doe"
-            />
-          </div>
-          <div>
-            <label
-              htmlFor="lead-email"
-              className="mb-1 block text-sm font-medium text-gray-700"
-            >
-              Email
-            </label>
-            <input
-              id="lead-email"
-              type="email"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
-              placeholder="john@example.com"
-            />
-          </div>
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label
-                htmlFor="lead-status"
-                className="mb-1 block text-sm font-medium text-gray-700"
-              >
-                Status
-              </label>
-              <select
-                id="lead-status"
-                value={status}
-                onChange={(e) =>
-                  setStatus(
-                    e.target.value as 'New' | 'Contacted' | 'Qualified' | 'Lost'
-                  )
-                }
-                className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
-              >
-                <option value="New">New</option>
-                <option value="Contacted">Contacted</option>
-                <option value="Qualified">Qualified</option>
-                <option value="Lost">Lost</option>
-              </select>
-            </div>
-            <div>
-              <label
-                htmlFor="lead-source"
-                className="mb-1 block text-sm font-medium text-gray-700"
-              >
-                Source
-              </label>
-              <select
-                id="lead-source"
-                value={source}
-                onChange={(e) =>
-                  setSource(
-                    e.target.value as 'Website' | 'Instagram' | 'Referral'
-                  )
-                }
-                className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
-              >
-                <option value="Website">Website</option>
-                <option value="Instagram">Instagram</option>
-                <option value="Referral">Referral</option>
-              </select>
-            </div>
-          </div>
-          {formError && (
-            <p className="text-xs text-red-600">{formError}</p>
-          )}
-          <div className="flex justify-end gap-2 pt-2">
-            <button
-              type="button"
-              onClick={onClose}
-              className="rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 transition-colors"
-            >
-              Cancel
-            </button>
-            <button
-              type="submit"
-              className="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 transition-colors"
-            >
-              Create Lead
-            </button>
-          </div>
-        </form>
-      </div>
-    </div>
+    </main>
+    </>
   );
 };
 

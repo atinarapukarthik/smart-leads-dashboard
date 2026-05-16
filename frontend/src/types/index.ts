@@ -15,6 +15,52 @@ export type Lead = {
   updatedAt: string;
 };
 
+export type Integration = {
+  _id: string;
+  userId: string;
+  gmailAddress: string;
+  expiryDate: number;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type Message = {
+  _id: string;
+  leadId: string;
+  salesUserId: string;
+  direction: 'outbound' | 'inbound';
+  subject: string;
+  body: string;
+  aiClassification: 'Contacted' | 'Qualified' | 'Lost' | 'Pending';
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type Metric = {
+  _id: string;
+  salesUserId: string;
+  emailsSent: number;
+  repliesReceived: number;
+  leadsQualified: number;
+  leadsLost: number;
+  lastActive: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type SalesPerformance = {
+  userId: string;
+  name: string;
+  email: string;
+  emailsSent: number;
+  repliesReceived: number;
+  leadsQualified: number;
+  leadsLost: number;
+  lastActive: string | null;
+  responseRate: string;
+  conversionRate: string;
+};
+
 export type RegisterResponse = {
   success: boolean;
   data: {

@@ -8,6 +8,7 @@ interface RegisterBody {
   email: string;
   password: string;
   role?: string;
+  adminKey?: string;
 }
 
 interface LoginBody {
@@ -50,6 +51,17 @@ export const register = async (
 
     const salt = await bcrypt.genSalt(10);
     const hashedPassword = await bcrypt.hash(password, salt);
+
+    if (role === 'Admin') {
+      const adminKey = process.env.ADMIN_REGISTRATION_KEY;
+      if (!adminKey || req.body.adminKey !== adminKey) {
+        res.status(403).json({
+          success: false,
+          message: 'Invalid admin registration key.',
+        });
+        return;
+      }
+    }
 
     const user = await User.create({
       name,

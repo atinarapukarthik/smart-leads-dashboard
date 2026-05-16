@@ -1,0 +1,43 @@
+import mongoose, { Document, Schema } from 'mongoose';
+
+export interface IIntegration extends Document {
+  userId: Schema.Types.ObjectId;
+  gmailAddress: string;
+  accessToken: string;
+  refreshToken: string;
+  expiryDate: number;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+const IntegrationSchema = new Schema<IIntegration>(
+  {
+    userId: {
+      type: Schema.Types.ObjectId,
+      ref: 'User',
+      required: true,
+      unique: true,
+    },
+    gmailAddress: {
+      type: String,
+      required: true,
+    },
+    accessToken: {
+      type: String,
+      required: true,
+    },
+    refreshToken: {
+      type: String,
+      required: true,
+    },
+    expiryDate: {
+      type: Number,
+      required: true,
+    },
+  },
+  { timestamps: true }
+);
+
+IntegrationSchema.index({ userId: 1 });
+
+export default mongoose.model<IIntegration>('Integration', IntegrationSchema);
