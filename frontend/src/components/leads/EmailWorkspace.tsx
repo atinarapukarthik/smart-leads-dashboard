@@ -135,7 +135,6 @@ const EmailWorkspace = ({ leadId, leadName, leadEmail, onClose, onSent }: EmailW
   };
 
   useEffect(() => {
-    handleGenerateDraft();
     loadMessages();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [leadId]);

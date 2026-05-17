@@ -170,8 +170,8 @@ export default function EmailPage({ contactedLeads, googleConnected, onSyncCompl
   const openCompose = useCallback(async () => {
     try {
       const res = await getNewLeads();
-      if (res.success && res.data) {
-        const leads = res.data.data || [];
+      if (res.data.success && res.data.data) {
+        const leads = res.data.data.data || [];
         setNewLeads(leads);
         if (leads.length > 0) {
           setComposeLead(leads[0]);

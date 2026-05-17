@@ -57,9 +57,11 @@ const connectWithRetry = async () => {
 };
 
 connectWithRetry().then(() => {
-  app.listen(PORT, () => {
-    console.log(`[SERVER] Running on port ${PORT}`);
-  });
+  if (process.env.VERCEL !== '1') {
+    app.listen(PORT, () => {
+      console.log(`[SERVER] Running on port ${PORT}`);
+    });
+  }
 });
 
 export default app;

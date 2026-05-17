@@ -4,8 +4,8 @@ import Message from '../models/Message';
 import Metric from '../models/Metric';
 import Integration from '../models/Integration';
 
-const OLLAMA_BASE = process.env.OLLAMA_BASE_URL || 'http://localhost:11434';
-const OLLAMA_MODEL = process.env.OLLAMA_MODEL || 'gemma2:9b';
+const GEMINI_API_KEY = process.env.GEMINI_API_KEY || '';
+const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-2.0-flash';
 
 async function refreshGoogleToken(integration: typeof Integration.prototype): Promise<{ accessToken: string; expiresIn: number } | null> {
   try {
@@ -37,45 +37,67 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-async function callOllama(
+async function callGemini(
   prompt: string,
   options?: { model?: string; maxRetries?: number },
 ): Promise<string> {
-  const model = options?.model || OLLAMA_MODEL;
+  const model = options?.model || GEMINI_MODEL;
   const maxRetries = options?.maxRetries ?? 3;
+
+  if (!GEMINI_API_KEY) {
+    throw new Error('AI_DISABLED');
+  }
 
   let lastError: Error | null = null;
 
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
     try {
-      const res = await fetch(`${OLLAMA_BASE}/api/generate`, {
+      const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${GEMINI_API_KEY}`;
+      const res = await fetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          model,
-          prompt,
-          stream: false,
+          contents: [{ parts: [{ text: prompt }] }],
         }),
       });
 
       if (!res.ok) {
-        throw new Error(`Ollama returned status ${res.status}: ${await res.text()}`);
+        const errText = await res.text();
+        if (res.status === 429) {
+          throw new Error(`Gemini rate limited: ${errText}`);
+        }
+        throw new Error(`Gemini returned status ${res.status}: ${errText}`);
       }
 
-      const data = await res.json() as { response: string };
-      return data.response;
+      const data = await res.json() as {
+        candidates?: Array<{ content?: { parts?: Array<{ text: string }> } }>;
+      };
+
+      if (!data.candidates?.[0]?.content?.parts?.[0]?.text) {
+        throw new Error('Gemini returned empty response');
+      }
+
+      return data.candidates[0].content.parts[0].text;
     } catch (err) {
       lastError = err as Error;
       const msg = lastError.message.toLowerCase();
-      const isConnRefused = msg.includes('econnrefused') || msg.includes('connect') || msg.includes('fetch failed');
+      const isRateLimit = msg.includes('429') || msg.includes('rate limit');
+      const isConnError = msg.includes('fetch failed') || msg.includes('network') || msg.includes('econnrefused');
 
-      if (isConnRefused) {
+      if (isRateLimit && attempt < maxRetries) {
+        const delay = Math.min(2000 * Math.pow(2, attempt) + Math.random() * 1000, 30000);
+        console.log(`[AI] Gemini rate limited (attempt ${attempt}/${maxRetries}), retrying in ${Math.round(delay)}ms`);
+        await sleep(delay);
+        continue;
+      }
+
+      if (isConnError) {
         throw new Error('AI_DISABLED');
       }
 
       if (attempt < maxRetries) {
         const delay = Math.min(1000 * Math.pow(2, attempt) + Math.random() * 500, 10000);
-        console.log(`[AI] Ollama error (attempt ${attempt}/${maxRetries}), retrying in ${Math.round(delay)}ms: ${lastError.message}`);
+        console.log(`[AI] Gemini error (attempt ${attempt}/${maxRetries}), retrying in ${Math.round(delay)}ms: ${lastError.message}`);
         await sleep(delay);
       }
     }
@@ -120,7 +142,7 @@ Subject: [subject line]
 ---
 [email body]`;
 
-    const responseText = await callOllama(prompt);
+    const responseText = await callGemini(prompt);
 
     res.json({
       success: true,
@@ -311,7 +333,7 @@ ${body}`;
     let classification: 'Contacted' | 'Qualified' | 'Lost' = 'Contacted';
 
     try {
-      const responseText = (await callOllama(classificationPrompt)).trim().toLowerCase();
+      const responseText = (await callGemini(classificationPrompt)).trim().toLowerCase();
 
       if (responseText.includes('qualified')) {
         classification = 'Qualified';
@@ -591,7 +613,7 @@ Respond with a JSON object where keys are "email_0", "email_1", etc., and values
 ${batchMessages.map((m, i) => `email_${i}:\nFrom: ${m.fromEmail}\nSubject: ${m.subject}\nBody: ${m.body.substring(0, 1000)}`).join('\n---\n')}`;
 
       try {
-        const raw = await callOllama(batchPrompt);
+        const raw = await callGemini(batchPrompt);
         const parsed = JSON.parse(raw.replace(/```json|```/g, '').trim());
         for (const [key, value] of Object.entries(parsed)) {
           const idx = parseInt(key.replace('email_', ''), 10);
