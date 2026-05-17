@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { getLeads, createLead, deleteLead } from '../api/leadService';
+import { getLeads, createLead, deleteLead, getContactedLeads } from '../api/leadService';
 import { getIntegrationStatus, initiateGoogleOAuth } from '../api/emailService';
 import { useAuth } from '../context/AuthContext';
 import useDebounce from '../hooks/useDebounce';
@@ -10,8 +10,10 @@ import LeadTable from '../components/leads/LeadTable';
 import KpiCards from '../components/leads/KpiCards';
 import CreateLeadModal from '../components/leads/CreateLeadModal';
 import EmailWorkspace from '../components/leads/EmailWorkspace';
+import LeadDetailPanel from '../components/leads/LeadDetailPanel';
 import DashboardNav from '../components/layout/DashboardNav';
 import AnalyticsPage from './AnalyticsPage';
+import EmailPage from '../components/email/EmailPage';
 import type { Lead, PaginatedResponse } from '../types';
 
 const SettingsTab = () => {
@@ -62,8 +64,26 @@ const Dashboard = () => {
   const [showModal, setShowModal] = useState(false);
   const [showEmail, setShowEmail] = useState(false);
   const [selectedLeadForEmail, setSelectedLeadForEmail] = useState<Lead | null>(null);
+  const [selectedLeadDetail, setSelectedLeadDetail] = useState<Lead | null>(null);
+  const [leadDetailTab, setLeadDetailTab] = useState<'overview' | 'email'>('overview');
   const [googleConnected, setGoogleConnected] = useState(false);
   const [showGoogleConnect, setShowGoogleConnect] = useState(false);
+  const [contactedLeads, setContactedLeads] = useState<Lead[]>([]);
+
+  const fetchContactedLeads = useCallback(async () => {
+    try {
+      const res = await getContactedLeads();
+      if (res.data.success) {
+        setContactedLeads(res.data.data || []);
+      }
+    } catch (err) {
+      console.error('Failed to fetch contacted leads:', err);
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchContactedLeads();
+  }, [fetchContactedLeads]);
 
   const fetchGoogleStatus = useCallback(async () => {
     console.log('[Dashboard] Fetching Google status...');
@@ -225,23 +245,24 @@ const Dashboard = () => {
     return (
       <>
         <DashboardNav activeTab={activeTab} onTabChange={setActiveTab} />
-        <main className="mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:px-8">
-          {selectedLeadForEmail ? (
-            <EmailWorkspace
-              leadId={selectedLeadForEmail._id}
-              leadName={selectedLeadForEmail.name}
-              leadEmail={selectedLeadForEmail.email}
-              onClose={() => {
-                setShowEmail(false);
-                setSelectedLeadForEmail(null);
-              }}
-            />
-          ) : (
-            <div className="text-center py-12">
-              <p className="text-gray-500">Select a lead from the Leads tab to send an email.</p>
-            </div>
-          )}
-        </main>
+        {selectedLeadForEmail ? (
+          <EmailWorkspace
+            leadId={selectedLeadForEmail._id}
+            leadName={selectedLeadForEmail.name}
+            leadEmail={selectedLeadForEmail.email}
+            onClose={() => {
+              setShowEmail(false);
+              setSelectedLeadForEmail(null);
+              fetchContactedLeads();
+            }}
+          />
+        ) : (
+          <EmailPage
+            contactedLeads={contactedLeads}
+            googleConnected={googleConnected}
+            onSyncComplete={fetchContactedLeads}
+          />
+        )}
       </>
     );
   }
@@ -387,8 +408,33 @@ const Dashboard = () => {
                 setShowEmail(true);
                 setActiveTab('email');
               }}
+              onRowClick={(lead) => {
+                setSelectedLeadDetail(lead);
+                setLeadDetailTab('overview');
+              }}
+              selectedLeadId={selectedLeadDetail?._id}
             />
           </div>
+
+          {selectedLeadDetail && (
+            <>
+              <div 
+                className="fixed inset-0 bg-black/20 z-30"
+                onClick={() => setSelectedLeadDetail(null)}
+              />
+              <LeadDetailPanel
+                lead={selectedLeadDetail}
+                onClose={() => setSelectedLeadDetail(null)}
+                onSendEmail={() => {
+                  setSelectedLeadForEmail(selectedLeadDetail);
+                  setShowEmail(true);
+                  setActiveTab('email');
+                }}
+                activeTab={leadDetailTab}
+                onTabChange={setLeadDetailTab}
+              />
+            </>
+          )}
 
           {pagination && pagination.totalPages > 1 && (
             <div className="mt-5 flex flex-col items-center justify-between gap-4 sm:flex-row">

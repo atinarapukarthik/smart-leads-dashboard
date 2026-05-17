@@ -1,13 +1,88 @@
 import { Request, Response, NextFunction } from 'express';
-import { GoogleGenerativeAI } from '@google/generative-ai';
 import Lead from '../models/Lead';
 import Message from '../models/Message';
 import Metric from '../models/Metric';
 import Integration from '../models/Integration';
 
-const apiKey = process.env.GEMINI_API_KEY || '';
-console.log('[EMAIL] API Key present:', !!apiKey, 'starts with:', apiKey.substring(0, 10));
-const genAI = new GoogleGenerativeAI(apiKey);
+const OLLAMA_BASE = process.env.OLLAMA_BASE_URL || 'http://localhost:11434';
+const OLLAMA_MODEL = process.env.OLLAMA_MODEL || 'gemma2:9b';
+
+async function refreshGoogleToken(integration: typeof Integration.prototype): Promise<{ accessToken: string; expiresIn: number } | null> {
+  try {
+    const response = await fetch('https://oauth2.googleapis.com/token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        client_id: process.env.GOOGLE_CLIENT_ID || '',
+        client_secret: process.env.GOOGLE_CLIENT_SECRET || '',
+        refresh_token: integration.refreshToken,
+        grant_type: 'refresh_token',
+      }),
+    });
+
+    if (!response.ok) {
+      console.error('[TOKEN] Refresh failed:', await response.text());
+      return null;
+    }
+
+    const tokens = await response.json() as { access_token: string; expires_in: number };
+    return { accessToken: tokens.access_token, expiresIn: tokens.expires_in };
+  } catch (err) {
+    console.error('[TOKEN] Refresh error:', (err as Error).message);
+    return null;
+  }
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function callOllama(
+  prompt: string,
+  options?: { model?: string; maxRetries?: number },
+): Promise<string> {
+  const model = options?.model || OLLAMA_MODEL;
+  const maxRetries = options?.maxRetries ?? 3;
+
+  let lastError: Error | null = null;
+
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      const res = await fetch(`${OLLAMA_BASE}/api/generate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model,
+          prompt,
+          stream: false,
+        }),
+      });
+
+      if (!res.ok) {
+        throw new Error(`Ollama returned status ${res.status}: ${await res.text()}`);
+      }
+
+      const data = await res.json() as { response: string };
+      return data.response;
+    } catch (err) {
+      lastError = err as Error;
+      const msg = lastError.message.toLowerCase();
+      const isConnRefused = msg.includes('econnrefused') || msg.includes('connect') || msg.includes('fetch failed');
+
+      if (isConnRefused) {
+        throw new Error('AI_DISABLED');
+      }
+
+      if (attempt < maxRetries) {
+        const delay = Math.min(1000 * Math.pow(2, attempt) + Math.random() * 500, 10000);
+        console.log(`[AI] Ollama error (attempt ${attempt}/${maxRetries}), retrying in ${Math.round(delay)}ms: ${lastError.message}`);
+        await sleep(delay);
+      }
+    }
+  }
+
+  throw lastError || new Error('AI call failed after retries');
+}
 
 export const generateDraft = async (req: Request, res: Response, _next?: NextFunction): Promise<void> => {
   try {
@@ -24,8 +99,6 @@ export const generateDraft = async (req: Request, res: Response, _next?: NextFun
       res.status(404).json({ success: false, message: 'Lead not found' });
       return;
     }
-
-    const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
 
     const prompt = `You are a sales assistant helping a sales representative write a professional introductory email to a potential lead.
 
@@ -47,8 +120,7 @@ Subject: [subject line]
 ---
 [email body]`;
 
-    const result = await model.generateContent(prompt);
-    const responseText = result.response.text();
+    const responseText = await callOllama(prompt);
 
     res.json({
       success: true,
@@ -61,12 +133,11 @@ Subject: [subject line]
     const err = error as Error;
     console.error('[EMAIL] Draft generation error:', err.message);
 
-    const errMsg = err.message || '';
-    if (errMsg.includes('API_KEY') || errMsg.includes('network') || errMsg.includes('timeout') || errMsg.includes('403') || errMsg.includes('unregistered')) {
+    if (err.message === 'AI_DISABLED') {
       res.status(503).json({
         success: false,
         code: 'AI_DOWNTIME',
-        message: 'AI service unavailable. Please connect Google account in Settings or try again later.',
+        message: 'Ollama is not running. Please start Ollama and try again.',
       });
       return;
     }
@@ -77,7 +148,7 @@ Subject: [subject line]
 
 export const sendEmail = async (req: Request, res: Response): Promise<void> => {
   try {
-    const { leadId, subject, body } = req.body;
+    const { leadId, toEmail, subject, body } = req.body;
 
     if (!leadId || !subject || !body) {
       res.status(400).json({ success: false, message: 'Lead ID, subject, and body are required' });
@@ -91,6 +162,8 @@ export const sendEmail = async (req: Request, res: Response): Promise<void> => {
       return;
     }
 
+    const recipientEmail = toEmail || lead.email;
+
     const integration = await Integration.findOne({ userId: req.user?.id });
 
     if (!integration) {
@@ -101,12 +174,24 @@ export const sendEmail = async (req: Request, res: Response): Promise<void> => {
       return;
     }
 
-    if (Date.now() > integration.expiryDate) {
-      res.status(401).json({
-        success: false,
-        message: 'Google access token expired. Please reconnect your Gmail in Settings.',
-      });
-      return;
+    let accessToken = integration.accessToken;
+
+    if (Date.now() > integration.expiryDate - 60000) {
+      const refreshed = await refreshGoogleToken(integration);
+      if (refreshed) {
+        accessToken = refreshed.accessToken;
+        await Integration.findByIdAndUpdate(integration._id, {
+          accessToken: refreshed.accessToken,
+          expiryDate: Date.now() + refreshed.expiresIn * 1000,
+        });
+        console.log('[TOKEN] Access token refreshed successfully');
+      } else {
+        res.status(401).json({
+          success: false,
+          message: 'Google access token expired. Please reconnect your Gmail in Settings.',
+        });
+        return;
+      }
     }
 
     const message = new Message({
@@ -129,11 +214,69 @@ export const sendEmail = async (req: Request, res: Response): Promise<void> => {
       { upsert: true }
     );
 
-    console.log(`[EMAIL] Simulated send to ${lead.email}: ${subject}`);
+    // Actually send the email via Gmail API
+    let emailSent = false;
+    try {
+      const emailContent = [
+        `To: ${recipientEmail}`,
+        `Subject: ${subject}`,
+        'Content-Type: text/plain; charset=utf-8',
+        '',
+        body,
+      ].join('\n');
+
+      const encodedEmail = Buffer.from(emailContent).toString('base64url');
+
+      console.log('[EMAIL] Attempting to send to:', recipientEmail);
+      console.log('[EMAIL] Using accessToken:', accessToken.substring(0, 20) + '...');
+
+      const gmailResponse = await fetch('https://gmail.googleapis.com/gmail/v1/users/me/messages/send', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${accessToken}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          raw: encodedEmail,
+        }),
+      });
+
+      const responseText = await gmailResponse.text();
+      console.log('[EMAIL] Gmail response status:', gmailResponse.status);
+      console.log('[EMAIL] Gmail response body:', responseText);
+
+      if (!gmailResponse.ok) {
+        const errorData = JSON.parse(responseText);
+        console.error('[EMAIL] Gmail API error:', errorData);
+        res.status(400).json({
+          success: false,
+          message: `Gmail API error: ${errorData.error?.message || 'Unknown error'}`,
+        });
+        return;
+      } else {
+        const gmailResult = JSON.parse(responseText);
+        console.log(`[EMAIL] Sent to ${recipientEmail}: ${gmailResult.id}`);
+        message.gmailMessageId = gmailResult.id;
+        await message.save();
+        
+        // Update lead status to Contacted
+        await Lead.findByIdAndUpdate(leadId, { status: 'Contacted' });
+        console.log(`[LEAD] Status updated to Contacted for lead ${leadId}`);
+        
+        emailSent = true;
+      }
+    } catch (gmailError) {
+      console.error('[EMAIL] Gmail send error:', (gmailError as Error).message);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to send email via Gmail',
+      });
+      return;
+    }
 
     res.json({
       success: true,
-      message: 'Email sent successfully',
+      message: emailSent ? 'Email sent successfully' : 'Email draft saved (Gmail send failed)',
       data: message,
     });
   } catch (error) {
@@ -160,8 +303,6 @@ export const processInboundEmail = async (req: Request, res: Response): Promise<
       return;
     }
 
-    const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
-
     const classificationPrompt = `Analyze this email response text from a prospective buyer. Classify the user's explicit intent into exactly one word from these options: 'Qualified' (if requesting demo, setup, or showing clear business interest), 'Lost' (if requesting unsubscribe, stating no budget, or explicitly rejecting communication), or 'Contacted' (if a generic response or out-of-office notification). Return ONLY the single keyword string.
 
 Email body:
@@ -170,8 +311,7 @@ ${body}`;
     let classification: 'Contacted' | 'Qualified' | 'Lost' = 'Contacted';
 
     try {
-      const result = await model.generateContent(classificationPrompt);
-      const responseText = result.response.text().trim().toLowerCase();
+      const responseText = (await callOllama(classificationPrompt)).trim().toLowerCase();
 
       if (responseText.includes('qualified')) {
         classification = 'Qualified';
@@ -231,16 +371,325 @@ ${body}`;
     const err = error as Error;
     console.error('[WEBHOOK] Inbound email processing error:', err.message);
 
-    if (err.message.includes('API_KEY') || err.message.includes('network')) {
+    if (err.message === 'AI_DISABLED') {
       res.status(503).json({
         success: false,
         code: 'AI_DOWNTIME',
-        message: 'AI classification service temporarily unavailable.',
+        message: 'AI classification service temporarily unavailable (Ollama not running).',
       });
       return;
     }
 
     res.status(500).json({ success: false, message: 'Failed to process inbound email' });
+  }
+};
+
+interface GmailPayloadPart {
+  mimeType: string;
+  body: { data?: string; size: number };
+  parts?: GmailPayloadPart[];
+}
+
+interface GmailMessage {
+  id: string;
+  threadId: string;
+  payload: {
+    mimeType: string;
+    headers: Array<{ name: string; value: string }>;
+    body: { data?: string; size: number };
+    parts?: GmailPayloadPart[];
+  };
+  internalDate: string;
+}
+
+function extractEmailFromHeader(headerValue: string): string | null {
+  const match = headerValue.match(/<([^>]+)>/);
+  const email = match ? match[1] : headerValue;
+  const trimmed = email.trim().toLowerCase();
+  return trimmed || null;
+}
+
+function extractGmailBody(payload: GmailMessage['payload']): string {
+  function decodeBase64(data: string): string {
+    return Buffer.from(data, 'base64').toString('utf-8');
+  }
+
+  function searchParts(parts: GmailPayloadPart[]): string {
+    for (const part of parts) {
+      if (part.mimeType === 'text/plain' && part.body.data) {
+        return decodeBase64(part.body.data);
+      }
+      if (part.parts) {
+        const found = searchParts(part.parts);
+        if (found) return found;
+      }
+    }
+    return '';
+  }
+
+  if (payload.body.data) {
+    return decodeBase64(payload.body.data);
+  }
+
+  if (payload.parts) {
+    return searchParts(payload.parts);
+  }
+
+  return '';
+}
+
+export const checkInbox = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const userId = req.user?.id;
+
+    const integration = await Integration.findOne({ userId });
+    if (!integration) {
+      res.status(401).json({ success: false, message: 'Google account not connected.' });
+      return;
+    }
+
+    let accessToken = integration.accessToken;
+
+    if (Date.now() > integration.expiryDate - 60000) {
+      const refreshed = await refreshGoogleToken(integration);
+      if (refreshed) {
+        accessToken = refreshed.accessToken;
+        await Integration.findByIdAndUpdate(integration._id, {
+          accessToken: refreshed.accessToken,
+          expiryDate: Date.now() + refreshed.expiresIn * 1000,
+        });
+      } else {
+        res.status(401).json({ success: false, message: 'Google token expired. Reconnect.' });
+        return;
+      }
+    }
+
+    const allLeads = await Lead.find({
+      email: { $nin: [null, ''] },
+    }).select('_id email name status');
+
+    if (allLeads.length === 0) {
+      res.json({ success: true, data: { newMessages: 0, totalFound: 0 } });
+      return;
+    }
+
+    const leadByEmail = new Map<string, typeof allLeads[0]>();
+    for (const lead of allLeads) {
+      leadByEmail.set(lead.email.toLowerCase(), lead);
+    }
+
+    const seenGmailIds = await Message.find({
+      gmailMessageId: { $exists: true, $ne: null },
+    }).select('gmailMessageId');
+    const importedSet = new Set(seenGmailIds.map((m) => m.gmailMessageId));
+
+    let newMessages = 0;
+    let qualifiedCount = 0;
+    let lostCount = 0;
+    const errors: string[] = [];
+    const leadsWithGmailActivity = new Set<string>();
+
+    const batchMessages: Array<{
+      msgData: GmailMessage;
+      fromEmail: string | null;
+      subject: string;
+      body: string;
+      receivedDate: Date;
+      matchedLead: typeof allLeads[0];
+    }> = [];
+
+    const debug: Record<string, unknown> = {
+      leadsCount: allLeads.length,
+      leadsEmails: allLeads.map(l => l.email),
+      alreadyImportedIdsCount: importedSet.size,
+      alreadyImportedIds: importedSet.size > 0 ? Array.from(importedSet).slice(0, 10) : [],
+      leadResults: [] as Array<{ email: string; found: number; error?: string }>,
+    };
+
+    for (const lead of allLeads) {
+      const leadDebug: Record<string, unknown> = { email: lead.email, found: 0 };
+
+      const q = encodeURIComponent(`(from:${lead.email} OR to:${lead.email})`);
+      const listUrl = `https://gmail.googleapis.com/gmail/v1/users/me/messages?maxResults=10&q=${q}`;
+
+      const listRes = await fetch(listUrl, {
+        headers: { Authorization: `Bearer ${accessToken}` },
+      });
+
+      if (!listRes.ok) {
+        const errBody = await listRes.text().catch(() => '');
+        (debug.leadResults as Array<Record<string, unknown>>).push({ ...leadDebug, error: `HTTP ${listRes.status}: ${errBody.substring(0, 100)}` });
+        continue;
+      }
+
+      const listData = await listRes.json() as {
+        messages?: Array<{ id: string; threadId: string }>;
+      };
+
+      if (!listData.messages || listData.messages.length === 0) {
+        (debug.leadResults as Array<Record<string, unknown>>).push({ ...leadDebug, found: 0 });
+        continue;
+      }
+
+      leadsWithGmailActivity.add(lead._id.toString());
+
+      const msgDebug: Array<Record<string, unknown>> = [];
+      (debug.leadResults as Array<Record<string, unknown>>).push({ ...leadDebug, found: listData.messages.length, msgDebug });
+
+      for (const msgRef of listData.messages) {
+        if (importedSet.has(msgRef.id)) {
+          msgDebug.push({ id: msgRef.id, skip: 'already_imported' });
+          continue;
+        }
+
+        try {
+          const msgRes = await fetch(
+            `https://gmail.googleapis.com/gmail/v1/users/me/messages/${msgRef.id}?format=full`,
+            { headers: { Authorization: `Bearer ${accessToken}` } },
+          );
+            if (!msgRes.ok) {
+              msgDebug.push({ id: msgRef.id, skip: 'fetch_failed', status: msgRes.status });
+              continue;
+            }
+
+            const msgData = await msgRes.json() as GmailMessage;
+
+            const getHeader = (name: string): string =>
+              msgData.payload.headers.find((h) => h.name === name)?.value || '';
+
+            const fromEmail = extractEmailFromHeader(getHeader('From'));
+            const subject = getHeader('Subject');
+            const body = extractGmailBody(msgData.payload);
+            const receivedDate = new Date(parseInt(msgData.internalDate, 10) || Date.now());
+            const inReplyTo = getHeader('In-Reply-To') || undefined;
+
+            const matchedLead = leadByEmail.get(lead.email.toLowerCase());
+            if (!matchedLead) {
+              msgDebug.push({ id: msgRef.id, skip: 'lead_not_found_in_map' });
+              continue;
+            }
+
+          importedSet.add(msgRef.id);
+          batchMessages.push({ msgData, fromEmail, subject, body, receivedDate, matchedLead });
+          newMessages++;
+        } catch {
+          // skip failed message
+        }
+      }
+    }
+
+    const classifications = new Map<string, 'Contacted' | 'Qualified' | 'Lost'>();
+
+    if (batchMessages.length > 0) {
+      const batchPrompt = `You are classifying email replies from prospective buyers. For each email below (separated by "---"), classify the sender's intent into exactly one category:
+- Qualified: requesting demo, setup, pricing, or showing clear business interest
+- Lost: requesting unsubscribe, stating no budget, explicitly rejecting
+- Contacted: generic response, out-of-office, or unclear
+
+Respond with a JSON object where keys are "email_0", "email_1", etc., and values are one of "Qualified", "Lost", or "Contacted". Return ONLY valid JSON, no other text.
+
+${batchMessages.map((m, i) => `email_${i}:\nFrom: ${m.fromEmail}\nSubject: ${m.subject}\nBody: ${m.body.substring(0, 1000)}`).join('\n---\n')}`;
+
+      try {
+        const raw = await callOllama(batchPrompt);
+        const parsed = JSON.parse(raw.replace(/```json|```/g, '').trim());
+        for (const [key, value] of Object.entries(parsed)) {
+          const idx = parseInt(key.replace('email_', ''), 10);
+          if (typeof value === 'string' && ['Qualified', 'Lost', 'Contacted'].includes(value)) {
+            classifications.set(`email_${idx}`, value as 'Contacted' | 'Qualified' | 'Lost');
+          }
+        }
+      } catch (aiErr) {
+        console.error('[INBOX] Batch AI classification failed:', (aiErr as Error).message);
+      }
+    }
+
+    for (let i = 0; i < batchMessages.length; i++) {
+      const { msgData, subject, body, receivedDate, matchedLead } = batchMessages[i];
+      const classification = classifications.get(`email_${i}`) || 'Contacted';
+
+      try {
+        await Message.create({
+          leadId: matchedLead._id,
+          salesUserId: userId,
+          direction: 'inbound',
+          subject,
+          body,
+          aiClassification: classification,
+          gmailMessageId: msgData.id,
+          createdAt: receivedDate,
+        });
+
+        await Lead.findByIdAndUpdate(matchedLead._id, { status: classification });
+
+        if (classification === 'Qualified') qualifiedCount++;
+        if (classification === 'Lost') lostCount++;
+      } catch (storeErr) {
+        errors.push(`Failed to store message ${msgData.id}: ${(storeErr as Error).message}`);
+      }
+    }
+
+    if (leadsWithGmailActivity.size > 0) {
+      await Lead.updateMany(
+        { _id: { $in: Array.from(leadsWithGmailActivity) }, status: 'New' },
+        { $set: { status: 'Contacted' } },
+      );
+    }
+
+    if (newMessages > 0) {
+      const metricUpdate: Record<string, number> = {
+        repliesReceived: newMessages,
+      };
+      if (qualifiedCount > 0) metricUpdate.leadsQualified = qualifiedCount;
+      if (lostCount > 0) metricUpdate.leadsLost = lostCount;
+
+      await Metric.findOneAndUpdate(
+        { salesUserId: userId },
+        {
+          $inc: metricUpdate,
+          $set: { lastActive: new Date() },
+        },
+        { upsert: true },
+      );
+    }
+
+    await Integration.findByIdAndUpdate(integration._id, { inboxLastSync: new Date() });
+
+    res.json({
+      success: true,
+      data: {
+        newMessages,
+        totalFound: batchMessages.length,
+        errors: errors.length > 0 ? errors : undefined,
+        debug,
+      },
+    });
+  } catch (error) {
+    const err = error as Error;
+    console.error('[INBOX] Check error:', err.message);
+    res.status(500).json({ success: false, message: 'Failed to check inbox' });
+  }
+};
+
+export const getInboundSummary = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const userId = req.user?.id;
+
+    const results = await Message.aggregate([
+      { $match: { salesUserId: userId, direction: 'inbound' } },
+      { $group: { _id: '$leadId', count: { $sum: 1 }, lastReceived: { $max: '$createdAt' } } },
+    ]);
+
+    const summary: Record<string, { count: number; lastReceived: string }> = {};
+    for (const r of results) {
+      summary[r._id.toString()] = { count: r.count, lastReceived: r.lastReceived };
+    }
+
+    res.json({ success: true, data: summary });
+  } catch (error) {
+    const err = error as Error;
+    console.error('[INBOX] Summary error:', err.message);
+    res.status(500).json({ success: false, message: 'Failed to get inbound summary' });
   }
 };
 
@@ -419,9 +868,25 @@ export const getIntegrationStatus = async (req: Request, res: Response): Promise
     const isExpired = Date.now() > integration.expiryDate;
     console.log('[INTEGRATION] Token expired:', isExpired);
 
+    // Test token validity with Gmail API
+    let tokenValid = false;
+    if (!isExpired) {
+      try {
+        const testResponse = await fetch('https://www.googleapis.com/gmail/v1/users/me/profile', {
+          headers: { 'Authorization': `Bearer ${integration.accessToken}` },
+        });
+        tokenValid = testResponse.ok;
+        if (!tokenValid) {
+          console.log('[INTEGRATION] Token test failed:', testResponse.status);
+        }
+      } catch (e) {
+        console.log('[INTEGRATION] Token test error:', (e as Error).message);
+      }
+    }
+
     res.json({
       success: true,
-      connected: !isExpired,
+      connected: !isExpired && tokenValid,
       gmailAddress: integration.gmailAddress,
       expiryDate: integration.expiryDate,
     });

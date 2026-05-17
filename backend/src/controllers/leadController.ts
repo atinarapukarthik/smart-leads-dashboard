@@ -184,3 +184,22 @@ export const deleteLead = async (
     next(error);
   }
 };
+
+export const getContactedLeads = async (
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> => {
+  try {
+    const contactedLeads = await Lead.find({
+      status: { $in: ['Contacted', 'Qualified', 'Lost'] }
+    }).sort({ updatedAt: -1 });
+
+    res.status(200).json({
+      success: true,
+      data: contactedLeads,
+    });
+  } catch (error) {
+    next(error);
+  }
+};

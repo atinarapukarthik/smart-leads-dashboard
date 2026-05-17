@@ -7,6 +7,7 @@ export interface IMessage extends Document {
   subject: string;
   body: string;
   aiClassification: 'Contacted' | 'Qualified' | 'Lost' | 'Pending';
+  gmailMessageId?: string;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -40,6 +41,9 @@ const MessageSchema = new Schema<IMessage>(
       type: String,
       enum: ['Contacted', 'Qualified', 'Lost', 'Pending'],
       default: 'Pending',
+    },
+    gmailMessageId: {
+      type: String,
     },
   },
   { timestamps: true }

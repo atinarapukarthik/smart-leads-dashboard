@@ -43,6 +43,4 @@ const MetricSchema = new Schema<IMetric>(
   { timestamps: true }
 );
 
-MetricSchema.index({ salesUserId: 1 });
-
 export default mongoose.model<IMetric>('Metric', MetricSchema);

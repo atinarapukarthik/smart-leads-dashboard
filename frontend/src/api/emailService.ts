@@ -12,6 +12,7 @@ interface EmailDraftResponse {
 
 interface SendEmailPayload {
   leadId: string;
+  toEmail: string;
   subject: string;
   body: string;
 }
@@ -66,5 +67,55 @@ export const processInboundEmail = async (data: {
   leadEmail?: string;
 }): Promise<{ success: boolean; data?: { leadId: string; classification: string } }> => {
   const response = await apiClient.post('/email/webhooks/inbound-email', data);
+  return response.data;
+};
+
+export interface MessageData {
+  _id: string;
+  leadId: string;
+  salesUserId: string;
+  direction: 'outbound' | 'inbound';
+  subject: string;
+  body: string;
+  aiClassification: 'Contacted' | 'Qualified' | 'Lost' | 'Pending';
+  gmailMessageId?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+interface GetMessagesResponse {
+  success: boolean;
+  data: MessageData[];
+}
+
+export const getMessages = async (leadId: string): Promise<GetMessagesResponse> => {
+  const response = await apiClient.get<GetMessagesResponse>(`/email/messages/${leadId}`);
+  return response.data;
+};
+
+interface CheckInboxResponse {
+  success: boolean;
+  data?: {
+    newMessages: number;
+    totalFound: number;
+    errors?: string[];
+    debug?: Record<string, unknown>;
+  };
+  message?: string;
+}
+
+export const checkInbox = async (): Promise<CheckInboxResponse> => {
+  const response = await apiClient.post<CheckInboxResponse>('/email/check-inbox');
+  return response.data;
+};
+
+interface InboundSummaryResponse {
+  success: boolean;
+  data?: Record<string, { count: number; lastReceived: string }>;
+  message?: string;
+}
+
+export const getInboundSummary = async (): Promise<InboundSummaryResponse> => {
+  const response = await apiClient.get<InboundSummaryResponse>('/email/inbound-summary');
   return response.data;
 };

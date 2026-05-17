@@ -5,6 +5,8 @@ interface LeadTableProps {
   leads: Lead[];
   onDelete: (id: string) => void;
   onEmailClick?: (lead: Lead) => void;
+  onRowClick?: (lead: Lead) => void;
+  selectedLeadId?: string;
 }
 
 const statusColors: Record<string, string> = {
@@ -14,7 +16,7 @@ const statusColors: Record<string, string> = {
   Lost: 'bg-red-100 text-red-700 ring-red-600/20',
 };
 
-const LeadTable = ({ leads, onDelete, onEmailClick }: LeadTableProps) => {
+const LeadTable = ({ leads, onDelete, onEmailClick, onRowClick, selectedLeadId }: LeadTableProps) => {
   const { user } = useAuth();
   const isAdmin = user?.role === 'Admin';
 
@@ -96,7 +98,11 @@ const LeadTable = ({ leads, onDelete, onEmailClick }: LeadTableProps) => {
           </thead>
           <tbody className="divide-y divide-gray-100 bg-white">
             {leads.map((lead) => (
-              <tr key={lead._id} className="transition-colors hover:bg-gray-50">
+              <tr 
+                key={lead._id} 
+                onClick={() => onRowClick?.(lead)}
+                className={`transition-colors hover:bg-gray-50 cursor-pointer ${selectedLeadId === lead._id ? 'bg-primary-50' : ''}`}
+              >
                 <td className="whitespace-nowrap px-4 py-3.5 text-sm font-medium text-gray-900">
                   {lead.name}
                 </td>

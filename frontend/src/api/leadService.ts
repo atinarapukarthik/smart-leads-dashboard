@@ -28,3 +28,9 @@ export const updateLead = (id: string, data: Partial<LeadCreateData>) =>
 
 export const deleteLead = (id: string) =>
   apiClient.delete<{ success: boolean; message: string }>(`/leads/${id}`);
+
+export const getContactedLeads = () =>
+  apiClient.get<{ success: boolean; data: Lead[] }>('/leads/contacted');
+
+export const getNewLeads = () =>
+  apiClient.get<PaginatedResponse<Lead>>('/leads', { params: { status: 'New' } });

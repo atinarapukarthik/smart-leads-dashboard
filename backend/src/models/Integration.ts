@@ -6,6 +6,7 @@ export interface IIntegration extends Document {
   accessToken: string;
   refreshToken: string;
   expiryDate: number;
+  inboxLastSync?: Date;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -33,6 +34,9 @@ const IntegrationSchema = new Schema<IIntegration>(
     expiryDate: {
       type: Number,
       required: true,
+    },
+    inboxLastSync: {
+      type: Date,
     },
   },
   { timestamps: true }
