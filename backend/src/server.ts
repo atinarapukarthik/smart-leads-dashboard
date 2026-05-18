@@ -36,6 +36,11 @@ app.use('/api/webhooks', emailRoutes);
 app.use(errorHandler as any);
 
 const connectWithRetry = async () => {
+  // Skip DB connection in serverless - handled by api/index.ts
+  if (process.env.VERCEL === '1') {
+    return;
+  }
+
   const maxRetries = 5;
   const retryDelay = 3000;
 
