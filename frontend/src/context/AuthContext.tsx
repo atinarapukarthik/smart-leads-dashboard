@@ -59,7 +59,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
         const base64Url = oauthToken.split('.')[1];
         const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/');
         const decoded = JSON.parse(atob(base64)) as { id: string; email: string; role: string };
-        const restoredUser: User = { id: decoded.id, _id: decoded.id, email: decoded.email, role: decoded.role, name: decoded.email.split('@')[0] };
+        const restoredUser: User = { id: decoded.id, _id: decoded.id, email: decoded.email, role: decoded.role as 'Admin' | 'Sales User', name: decoded.email.split('@')[0] };
         localStorage.setItem('token', oauthToken);
         localStorage.setItem('user', JSON.stringify(restoredUser));
         setUser(restoredUser);

@@ -171,7 +171,7 @@ export default function EmailPage({ contactedLeads, googleConnected, onSyncCompl
     try {
       const res = await getNewLeads();
       if (res.data.success && res.data.data) {
-        const leads = res.data.data.data || [];
+        const leads = res.data.data || [];
         setNewLeads(leads);
         if (leads.length > 0) {
           setComposeLead(leads[0]);
@@ -467,7 +467,6 @@ export default function EmailPage({ contactedLeads, googleConnected, onSyncCompl
                     const isOutbound = msg.direction === 'outbound';
                     const prevMsg = idx > 0 ? messages[idx - 1] : null;
                     const showDateSeparator = idx === 0 || new Date(msg.createdAt).toDateString() !== new Date(messages[idx - 1].createdAt).toDateString();
-                    const isFirstOfGroup = idx === 0 || messages[idx - 1].direction !== msg.direction;
                     const sameSender = prevMsg && prevMsg.direction === msg.direction;
                     const isThreadStart = idx === 0 || (msg.subject !== prevMsg?.subject);
 

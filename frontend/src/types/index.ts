@@ -1,4 +1,5 @@
 export type User = {
+  _id: string;
   id: string;
   name: string;
   email: string;
@@ -9,6 +10,9 @@ export type Lead = {
   _id: string;
   name: string;
   email: string;
+  phone?: string;
+  company?: string;
+  notes?: string;
   status: 'New' | 'Contacted' | 'Qualified' | 'Lost';
   source: 'Website' | 'Instagram' | 'Referral';
   createdAt: string;

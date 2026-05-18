@@ -48,7 +48,7 @@ const SettingsTab = () => {
 };
 
 const Dashboard = () => {
-  const { user, login } = useAuth();
+  const { user } = useAuth();
   const isAdmin = user?.role === 'Admin';
 
   const [activeTab, setActiveTab] = useState('leads');
@@ -62,12 +62,10 @@ const Dashboard = () => {
   const [sort, setSort] = useState('Latest');
   const [pagination, setPagination] = useState<PaginatedResponse<Lead>['pagination'] | null>(null);
   const [showModal, setShowModal] = useState(false);
-  const [showEmail, setShowEmail] = useState(false);
   const [selectedLeadForEmail, setSelectedLeadForEmail] = useState<Lead | null>(null);
   const [selectedLeadDetail, setSelectedLeadDetail] = useState<Lead | null>(null);
   const [leadDetailTab, setLeadDetailTab] = useState<'overview' | 'email'>('overview');
   const [googleConnected, setGoogleConnected] = useState(false);
-  const [showGoogleConnect, setShowGoogleConnect] = useState(false);
   const [contactedLeads, setContactedLeads] = useState<Lead[]>([]);
 
   const fetchContactedLeads = useCallback(async () => {
@@ -251,7 +249,6 @@ const Dashboard = () => {
             leadName={selectedLeadForEmail.name}
             leadEmail={selectedLeadForEmail.email}
             onClose={() => {
-              setShowEmail(false);
               setSelectedLeadForEmail(null);
               fetchContactedLeads();
             }}
@@ -405,7 +402,6 @@ const Dashboard = () => {
               onDelete={handleDelete}
               onEmailClick={(lead) => {
                 setSelectedLeadForEmail(lead);
-                setShowEmail(true);
                 setActiveTab('email');
               }}
               onRowClick={(lead) => {
@@ -427,7 +423,6 @@ const Dashboard = () => {
                 onClose={() => setSelectedLeadDetail(null)}
                 onSendEmail={() => {
                   setSelectedLeadForEmail(selectedLeadDetail);
-                  setShowEmail(true);
                   setActiveTab('email');
                 }}
                 activeTab={leadDetailTab}
