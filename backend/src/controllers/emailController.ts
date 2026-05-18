@@ -756,6 +756,7 @@ export const initiateGoogleOAuth = async (req: Request, res: Response): Promise<
 
 export const handleGoogleCallback = async (req: Request, res: Response): Promise<void> => {
   const { code, state } = req.query;
+  const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173';
 
   let token = '';
   if (state) {
@@ -771,8 +772,8 @@ export const handleGoogleCallback = async (req: Request, res: Response): Promise
 
     if (!code) {
       const redirectUrl = token 
-        ? `http://localhost:5173/dashboard?tab=email&error=no_code&token=${token}`
-        : 'http://localhost:5173/dashboard?tab=email&error=no_code';
+        ? `${frontendUrl}/dashboard?tab=email&error=no_code&token=${token}`
+        : `${frontendUrl}/dashboard?tab=email&error=no_code`;
       res.redirect(redirectUrl);
       return;
     }
@@ -783,8 +784,8 @@ export const handleGoogleCallback = async (req: Request, res: Response): Promise
 
     if (!clientId || !clientSecret) {
       const redirectUrl = token 
-        ? `http://localhost:5173/dashboard?tab=email&error=missing_credentials&token=${token}`
-        : 'http://localhost:5173/dashboard?tab=email&error=missing_credentials';
+        ? `${frontendUrl}/dashboard?tab=email&error=missing_credentials&token=${token}`
+        : `${frontendUrl}/dashboard?tab=email&error=missing_credentials`;
       res.redirect(redirectUrl);
       return;
     }
@@ -806,8 +807,8 @@ export const handleGoogleCallback = async (req: Request, res: Response): Promise
     if (tokens.error) {
       console.error('[OAUTH] Token error:', tokens.error);
       const redirectUrl = token 
-        ? `http://localhost:5173/dashboard?tab=email&error=token_failed&token=${token}`
-        : 'http://localhost:5173/dashboard?tab=email&error=token_failed';
+        ? `${frontendUrl}/dashboard?tab=email&error=token_failed&token=${token}`
+        : `${frontendUrl}/dashboard?tab=email&error=token_failed`;
       res.redirect(redirectUrl);
       return;
     }
@@ -858,18 +859,17 @@ export const handleGoogleCallback = async (req: Request, res: Response): Promise
       console.log('[OAUTH] Integration saved for user:', userId);
     }
 
-    // Redirect preserving token in URL for session recovery
     const redirectUrl = token 
-      ? `http://localhost:5173/dashboard?tab=email&success=google_connected&token=${token}`
-      : 'http://localhost:5173/dashboard?tab=email&success=google_connected';
+      ? `${frontendUrl}/dashboard?tab=email&success=google_connected&token=${token}`
+      : `${frontendUrl}/dashboard?tab=email&success=google_connected`;
     
     res.redirect(redirectUrl);
   } catch (error) {
     const err = error as Error;
     console.error('[OAUTH] Callback error:', err.message);
     const redirectUrl = token 
-      ? `http://localhost:5173/dashboard?tab=email&error=callback_failed&token=${token}`
-      : 'http://localhost:5173/dashboard?tab=email&error=callback_failed';
+      ? `${frontendUrl}/dashboard?tab=email&error=callback_failed&token=${token}`
+      : `${frontendUrl}/dashboard?tab=email&error=callback_failed`;
     res.redirect(redirectUrl);
   }
 };
