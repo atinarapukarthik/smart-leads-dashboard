@@ -7,6 +7,22 @@ import Integration from '../models/Integration';
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY || '';
 const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-2.0-flash';
 
+let geminiBusy = false;
+const geminiQueue: Array<() => void> = [];
+
+async function aquireGeminiQueueSlot(): Promise<void> {
+  if (geminiBusy) {
+    await new Promise<void>((resolve) => geminiQueue.push(resolve));
+  }
+  geminiBusy = true;
+}
+
+function releaseGeminiQueueSlot(): void {
+  geminiBusy = false;
+  const next = geminiQueue.shift();
+  if (next) next();
+}
+
 async function refreshGoogleToken(integration: typeof Integration.prototype): Promise<{ accessToken: string; expiresIn: number } | null> {
   try {
     const response = await fetch('https://oauth2.googleapis.com/token', {
@@ -42,7 +58,7 @@ async function callGemini(
   options?: { model?: string; maxRetries?: number },
 ): Promise<string> {
   const model = options?.model || GEMINI_MODEL;
-  const maxRetries = options?.maxRetries ?? 3;
+  const maxRetries = options?.maxRetries ?? 5;
 
   if (!GEMINI_API_KEY) {
     throw new Error('AI_DISABLED');
@@ -51,6 +67,7 @@ async function callGemini(
   let lastError: Error | null = null;
 
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    await aquireGeminiQueueSlot();
     try {
       const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${GEMINI_API_KEY}`;
       const res = await fetch(url, {
@@ -81,11 +98,12 @@ async function callGemini(
     } catch (err) {
       lastError = err as Error;
       const msg = lastError.message.toLowerCase();
-      const isRateLimit = msg.includes('429') || msg.includes('rate limit');
+      const isRateLimit = msg.includes('429') || msg.includes('rate limit') || msg.includes('too many requests');
+      const isQuota = msg.includes('quota') || msg.includes('resource exhausted');
       const isConnError = msg.includes('fetch failed') || msg.includes('network') || msg.includes('econnrefused');
 
-      if (isRateLimit && attempt < maxRetries) {
-        const delay = Math.min(2000 * Math.pow(2, attempt) + Math.random() * 1000, 30000);
+      if ((isRateLimit || isQuota) && attempt < maxRetries) {
+        const delay = Math.min(5000 * Math.pow(2, attempt - 1) + Math.random() * 2000, 60000);
         console.log(`[AI] Gemini rate limited (attempt ${attempt}/${maxRetries}), retrying in ${Math.round(delay)}ms`);
         await sleep(delay);
         continue;
@@ -96,10 +114,12 @@ async function callGemini(
       }
 
       if (attempt < maxRetries) {
-        const delay = Math.min(1000 * Math.pow(2, attempt) + Math.random() * 500, 10000);
+        const delay = Math.min(2000 * Math.pow(2, attempt) + Math.random() * 1000, 20000);
         console.log(`[AI] Gemini error (attempt ${attempt}/${maxRetries}), retrying in ${Math.round(delay)}ms: ${lastError.message}`);
         await sleep(delay);
       }
+    } finally {
+      releaseGeminiQueueSlot();
     }
   }
 
@@ -159,12 +179,17 @@ Subject: [subject line]
       res.status(503).json({
         success: false,
         code: 'AI_DOWNTIME',
-        message: 'Ollama is not running. Please start Ollama and try again.',
+        message: 'Gemini API key is not configured. Please set GEMINI_API_KEY.',
       });
       return;
     }
 
-    res.status(500).json({ success: false, message: 'Failed to generate draft' });
+    console.error('[EMAIL] Draft generation error:', err.message);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to generate draft',
+      error: process.env.NODE_ENV === 'development' ? err.message : undefined,
+    });
   }
 };
 

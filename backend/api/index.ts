@@ -1,3 +1,9 @@
+process.removeAllListeners('warning');
+process.on('warning', (warn) => {
+  if (warn.name === 'DeprecationWarning' && warn.message.includes('url.parse')) return;
+  console.warn(warn);
+});
+
 import { Request, Response } from 'express';
 import app from '../src/server';
 import mongoose from 'mongoose';
